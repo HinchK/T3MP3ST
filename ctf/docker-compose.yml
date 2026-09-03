@@ -41,17 +41,58 @@ services:
       context: ./docker/web/sqli-blind
       dockerfile: Dockerfile
     container_name: ctf_sqli_blind
-    ports:
-      - "8081:80"
-    environment:
-      - CTF_FLAG=T3MP3ST{bl1nd_sql1_t1m3_b4s3d}
-    restart: unless-stopped
+    restart: "no"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 64
+    mem_limit: 128m
+    cpus: 0.5
     networks:
-      - ctf-network
+      - sqli-blind-internal
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health', timeout=2).read()"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
     labels:
       - "ctf.category=web_exploitation"
       - "ctf.difficulty=2"
       - "ctf.points=200"
+
+  sqli-blind-gateway:
+    build:
+      context: ./docker/web/sqli-blind
+      dockerfile: Dockerfile
+    entrypoint: ["python", "proxy.py"]
+    depends_on:
+      sqli-blind:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8081:8080"
+    restart: "no"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 32
+    mem_limit: 64m
+    cpus: 0.25
+    networks:
+      - sqli-blind-edge
+      - sqli-blind-internal
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health', timeout=2).read()"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   xss-stored:
     build:
@@ -320,4 +361,11 @@ networks:
     internal: true
 
   rsa-weak-edge:
+    driver: bridge
+
+  sqli-blind-internal:
+    driver: bridge
+    internal: true
+
+  sqli-blind-edge:
     driver: bridge
