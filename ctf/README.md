@@ -171,6 +171,25 @@ The final teardown command is mandatory. See
 `docker/crypto/rsa-weak/PROVENANCE.md` for source, construction, container pin,
 reproduction, and sensitive-data review.
 
+### Blind-SQLi lab
+
+The `sqli-blind` challenge service has only an internal Docker network. A
+separately constrained allow-list gateway owns the loopback-only host port and
+answers with a boolean plus a row count only, so the flag is recovered through
+blind character-by-character comparison.
+
+```bash
+npm run test:ctf-sqli-blind
+docker compose -f ctf/docker-compose.yml up -d --build sqli-blind-gateway
+curl --fail http://127.0.0.1:8081/health
+python3 ctf/docker/web/sqli-blind/solve.py
+docker compose -f ctf/docker-compose.yml down --remove-orphans
+```
+
+The final teardown command is mandatory. See
+`docker/web/sqli-blind/PROVENANCE.md` for origin, license, intended
+vulnerability, flag handling, reproduction, and sensitive-data review.
+
 ## Comparison to Industry Benchmarks
 
 | Benchmark | Method | Verification | Our Approach |
