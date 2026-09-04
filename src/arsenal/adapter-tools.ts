@@ -151,6 +151,24 @@ const artifactPath = (target: string, params: Record<string, unknown>): string =
   return p;
 };
 
+/** Resolve a required secondary local artifact without allowing it to become a CLI option. */
+const auxiliaryArtifactPath = (value: unknown, label: string): string => {
+  const p = str(value);
+  if (!p) throw new Error(`requires ${label}.`);
+  if (/^-/.test(p)) throw new Error(`${label} must not look like a command option.`);
+  if (/^https?:\/\//i.test(p)) throw new Error(`${label} must be a local path, not a URL.`);
+  return p;
+};
+
+/** Keep Apktool output inside one non-destructive child directory of the working directory. */
+const apkOutputDirectory = (value: unknown): string => {
+  const output = str(value) ?? 'apk-out';
+  if (output === '.' || output === '..' || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(output)) {
+    throw new Error('output must be a safe directory name without path separators or leading options.');
+  }
+  return output;
+};
+
 /**
  * Per-binary arg templates for the common command-ready adapters. Keyed by `adapter.binary` (the
  * process name), with `adapter.id` also accepted as a fallback key so callers can template by either.
@@ -207,6 +225,16 @@ const ARG_TEMPLATES: Record<string, ArgTemplate> = {
       const wordlist = str(params.wordlist) ?? defaultWordlist();
       const mc = str(params.mc) ?? '200,301,302,403';
       return ['-u', target, '-w', wordlist, '-mc', mc, '-o', '/dev/stdout', '-of', 'json', '-s'];
+    },
+  },
+  feroxbuster: {
+    // Recursive content discovery, mirroring ffuf: --json -q streams JSONL to stdout with the
+    // banner/progress UI suppressed, so the output channel stays machine-readable.
+    targetParam: 'url',
+    defaultTimeoutMs: 300_000,
+    build: (target, params) => {
+      const wordlist = str(params.wordlist) ?? defaultWordlist();
+      return ['-u', target, '-w', wordlist, '--json', '-q'];
     },
   },
   sqlmap: {
@@ -361,6 +389,12 @@ const ARG_TEMPLATES: Record<string, ArgTemplate> = {
     defaultTimeoutMs: 180_000,
     build: (target, params) => ['-d', scanPath(target, params), '-o', 'json'],
   },
+  'osv-scanner': {
+    // OSV-Scanner v2 requires the scan subcommand; source is explicit and JSON stays on stdout.
+    targetParam: 'path',
+    defaultTimeoutMs: 300_000,
+    build: (target, params) => ['scan', 'source', '--format', 'json', '--recursive', scanPath(target, params)],
+  },
 
   // ── Reverse-engineering / mobile / smart-contract static analysis (local_read, operate on a FILE) ─
   // Without these each falls through to DEFAULT_TEMPLATE and spawns `<binary> <file>` — which for a
@@ -424,6 +458,38 @@ const ARG_TEMPLATES: Record<string, ArgTemplate> = {
     targetParam: 'path',
     defaultTimeoutMs: 180_000,
     build: (target, params) => ['--json', scanPath(target, params)],
+  },
+  apktool: {
+    // Decode to a controlled child directory. Do not use -f: an existing destination must fail
+    // rather than being recursively replaced by a model-selected invocation.
+    targetParam: 'file',
+    defaultTimeoutMs: 300_000,
+    build: (target, params) => ['d', artifactPath(target, params), '-o', apkOutputDirectory(params.output)],
+  },
+  hashcat: {
+    // Receipt-gated credential audit. --potfile-disable honors the catalog note "never store
+    // recovered secrets"; hash mode and wordlist stay operator-tunable via params.
+    targetParam: 'file',
+    defaultTimeoutMs: 600_000,
+    build: (target, params) => {
+      const mode = str(params.mode) ?? '0';
+      if (!/^\d{1,6}$/.test(mode)) throw new Error('hash mode must be a numeric Hashcat mode identifier.');
+      const wordlist = auxiliaryArtifactPath(
+        str(params.wordlist) ?? '/usr/share/wordlists/rockyou.txt',
+        'a local wordlist path',
+      );
+      return ['-m', mode, '--potfile-disable', artifactPath(target, params), wordlist];
+    },
+  },
+  yara: {
+    // YARA needs BOTH a ruleset and a target artifact: `yara <file>` alone errors
+    // ("no rules specified"). Refuse honestly when no ruleset is given.
+    targetParam: 'file',
+    defaultTimeoutMs: 120_000,
+    build: (target, params) => {
+      const rules = auxiliaryArtifactPath(params.rules, 'a local rules file (params.rules)');
+      return [rules, artifactPath(target, params)];
+    },
   },
 
   // ── Recon / OSINT adapters (networked) ─────────────────────────────────────────────────────────
