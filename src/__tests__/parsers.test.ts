@@ -69,6 +69,61 @@ describe('parseToolOutput — field mapping per scanner', () => {
     expect(f[0].title).toBe('katana: 3 endpoint(s) discovered');
     expect(f[0].details).toContain('/about');
   });
+
+  it('wpscan: core/plugin vulns + interesting findings + enumerated users, severity documented', () => {
+    const f = parseToolOutput('wpscan', fixture('wpscan.json'));
+    expect(f).toHaveLength(7); // 1 core + 3 plugin vulns, 2 interesting findings, 1 users aggregate
+    const core = f[0];
+    expect(core.title).toContain('WordPress core 6.4.2');
+    expect(core.severity).toBe('high'); // wpscan labels this core 'insecure'
+    expect(core.remediation).toBe('update WordPress core 6.4.2 to 6.4.3');
+    const woo = f.filter((x) => x.title.startsWith('plugin woocommerce'));
+    expect(woo).toHaveLength(2);
+    expect(woo[0].severity).toBe('medium'); // confirmed component vuln; wpscan never scores severity
+    expect(woo[0].remediation).toBe('update plugin woocommerce to 4.1.0');
+    const cf7 = f.find((x) => x.title.includes('contact-form-7-datepicker'));
+    expect(cf7?.cve).toEqual(['CVE-2020-11516']); // bare wpvulndb cve ref gains the CVE- prefix
+    expect(cf7?.remediation).toBeUndefined(); // fixed_in: null → no fabricated fix
+    const xmlrpc = f.find((x) => x.title.includes('XML-RPC'));
+    expect(xmlrpc?.severity).toBe('info');
+    expect(xmlrpc?.details).toContain('confidence: 30');
+    const users = f.find((x) => x.title.includes('user(s) enumerated'));
+    expect(users?.title).toBe('wpscan: 2 user(s) enumerated');
+    expect(users?.details).toContain('admin');
+    expect(users?.details).toContain('editor');
+  });
+
+  it('wpscan: redacts target-derived secrets from every emitted field', () => {
+    const secret = 'wpscan-secret-value';
+    const f = parseToolOutput('wpscan', JSON.stringify({
+      interesting_findings: [{
+        to_s: `Authenticated endpoint https://operator:${secret}@target.test/?token=${secret}`,
+        url: `https://operator:${secret}@target.test/?token=${secret}`,
+        found_by: `token=${secret}`,
+      }],
+      users: { [`token=${secret}`]: {} },
+    }));
+    const serialized = JSON.stringify(f);
+    expect(f).toHaveLength(2);
+    expect(serialized).not.toContain(secret);
+    expect(serialized).not.toContain('operator:');
+    expect(serialized).toContain('[redacted]');
+  });
+
+  it('wpscan: normalizes valid CVEs and discards malformed references', () => {
+    const f = parseToolOutput('wpscan', JSON.stringify({
+      plugins: {
+        example: {
+          vulnerabilities: [{
+            title: 'Mixed reference quality',
+            references: { cve: ['2020-11516', 'cve-2021-44228', 'not-a-cve', '2024-12'] },
+          }],
+        },
+      },
+    }));
+    expect(f).toHaveLength(1);
+    expect(f[0].cve).toEqual(['CVE-2020-11516', 'CVE-2021-44228']);
+  });
 });
 
 describe('parseToolOutput — honesty contract (never fabricate, never throw)', () => {
@@ -104,7 +159,7 @@ describe('parseToolOutput — honesty contract (never fabricate, never throw)', 
 
   it('exposes exactly the wired parser ids', () => {
     expect([...PARSED_TOOL_IDS].sort()).toEqual(
-      ['arjun', 'dalfox', 'feroxbuster', 'ffuf', 'garak', 'gitleaks', 'grype', 'httpx', 'katana', 'nuclei', 'semgrep', 'sqlmap', 'trivy', 'trufflehog', 'wafw00f'],
+      ['arjun', 'dalfox', 'feroxbuster', 'ffuf', 'garak', 'gitleaks', 'grype', 'httpx', 'katana', 'nuclei', 'semgrep', 'sqlmap', 'trivy', 'trufflehog', 'wafw00f', 'wpscan'],
     );
   });
 
